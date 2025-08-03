@@ -1,0 +1,665 @@
+<h1 id="uber-system-design---sde1-interview-guide">Uber System Design -
+SDE1 Interview Guide</h1>
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol type="1">
+<li><a href="#system-overview">System Overview</a></li>
+<li><a href="#requirements-analysis">Requirements Analysis</a></li>
+<li><a href="#entity-modeling">Entity Modeling</a></li>
+<li><a href="#system-architecture">System Architecture</a></li>
+<li><a href="#database-design">Database Design</a></li>
+<li><a href="#key-workflows">Key Workflows</a></li>
+<li><a href="#design-patterns">Design Patterns</a></li>
+<li><a href="#technical-considerations">Technical
+Considerations</a></li>
+<li><a href="#interview-flow">Interview Flow</a></li>
+</ol>
+<hr />
+<h2 id="system-overview">System Overview</h2>
+<p>Uber is a <strong>ride-sharing platform</strong> that connects riders
+with drivers for transportation services.</p>
+<h3 id="core-features">Core Features:</h3>
+<ul>
+<li>User registration and authentication</li>
+<li>Ride booking and matching</li>
+<li>Real-time tracking</li>
+<li>Payment processing</li>
+<li>Rating and review system</li>
+<li>Driver onboarding</li>
+</ul>
+<hr />
+<h2 id="requirements-analysis">Requirements Analysis</h2>
+<h3 id="functional-requirements">Functional Requirements:</h3>
+<ol type="1">
+<li><strong>User Management</strong>
+<ul>
+<li>Rider registration and profile management</li>
+<li>Driver registration and verification</li>
+<li>Authentication and authorization</li>
+</ul></li>
+<li><strong>Ride Booking</strong>
+<ul>
+<li>Location-based ride requests</li>
+<li>Driver matching and assignment</li>
+<li>Real-time ride tracking</li>
+<li>Ride completion and payment</li>
+</ul></li>
+<li><strong>Payment System</strong>
+<ul>
+<li>Multiple payment methods</li>
+<li>Fare calculation</li>
+<li>Driver earnings management</li>
+<li>Refund processing</li>
+</ul></li>
+<li><strong>Rating System</strong>
+<ul>
+<li>Driver-rider ratings</li>
+<li>Review management</li>
+<li>Quality control</li>
+</ul></li>
+</ol>
+<h3 id="non-functional-requirements">Non-Functional Requirements:</h3>
+<ul>
+<li><strong>Scalability</strong>: Handle millions of concurrent
+users</li>
+<li><strong>Availability</strong>: 99.9% uptime</li>
+<li><strong>Latency</strong>: &lt; 200ms for ride requests</li>
+<li><strong>Reliability</strong>: No data loss</li>
+<li><strong>Security</strong>: Secure payment and user data</li>
+</ul>
+<hr />
+<h2 id="entity-modeling">Entity Modeling</h2>
+<h3 id="core-entities">Core Entities:</h3>
+<h4 id="user-rider">1. User (Rider)</h4>
+<pre><code>Attributes:
+- id, name, email, phone, address
+- payment_methods, preferences
+- rating, total_rides, member_since
+- current_location (lat, lng)</code></pre>
+<h4 id="driver">2. Driver</h4>
+<pre><code>Attributes:
+- id, name, phone, license_number
+- vehicle_details, documents
+- rating, total_rides, earnings
+- current_location, status (online/offline)
+- verification_status</code></pre>
+<h4 id="vehicle">3. Vehicle</h4>
+<pre><code>Attributes:
+- id, license_plate, model, year
+- color, capacity, features
+- driver_id, insurance_info
+- maintenance_status</code></pre>
+<h4 id="ride">4. Ride</h4>
+<pre><code>Attributes:
+- id, rider_id, driver_id, vehicle_id
+- pickup_location, dropoff_location
+- status, fare, distance, duration
+- created_at, completed_at
+- payment_status</code></pre>
+<h4 id="payment">5. Payment</h4>
+<pre><code>Attributes:
+- id, ride_id, amount, method
+- status, transaction_id
+- driver_share, uber_commission
+- timestamp</code></pre>
+<h3 id="er-diagram">ER Diagram:</h3>
+<pre><code>┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│    User     │     │   Driver    │     │   Vehicle   │
+│             │     │             │     │             │
+│ id (PK)     │     │ id (PK)     │     │ id (PK)     │
+│ name        │     │ name        │     │ license_plate│
+│ email       │     │ phone       │     │ model       │
+│ phone       │     │ license_num │     │ driver_id   │
+│ rating      │     │ rating      │     │ (FK)        │
+│ location    │     │ status      │     └─────────────┘
+└─────────────┘     │ location    │             │
+       │            └─────────────┘             │
+       │                   │                   │
+       │                   │                   │
+       └───────────────────┼───────────────────┘
+                           │
+                    ┌─────────────┐
+                    │    Ride     │
+                    │             │
+                    │ id (PK)     │
+                    │ rider_id    │
+                    │ driver_id   │
+                    │ vehicle_id  │
+                    │ pickup_loc  │
+                    │ dropoff_loc │
+                    │ status      │
+                    │ fare        │
+                    └─────────────┘
+                           │
+                    ┌─────────────┐
+                    │   Payment   │
+                    │             │
+                    │ id (PK)     │
+                    │ ride_id (FK)│
+                    │ amount      │
+                    │ method      │
+                    │ status      │
+                    └─────────────┘</code></pre>
+<h3 id="relationships">Relationships:</h3>
+<pre><code>User (1) ----requests----&gt; Ride (many)
+Driver (1) ----provides----&gt; Ride (many)
+Vehicle (1) ----used_for----&gt; Ride (many)
+Ride (1) ----has----&gt; Payment (1)
+Driver (1) ----owns----&gt; Vehicle (many)</code></pre>
+<hr />
+<h2 id="system-architecture">System Architecture</h2>
+<h3 id="high-level-architecture">High-Level Architecture:</h3>
+<pre><code>┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Mobile App    │    │   Web Portal    │    │  Driver App     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         └───────────────────────┼───────────────────────┘
+                                 │
+                    ┌─────────────────┐
+                    │   API Gateway   │
+                    └─────────────────┘
+                                 │
+         ┌───────────────────────┼───────────────────────┐
+         │                       │                       │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│  User Service   │    │  Driver Service │    │  Ride Service   │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│ Payment Service │    │ Location Service│    │ Notification    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘</code></pre>
+<h3 id="microservices-breakdown">Microservices Breakdown:</h3>
+<ol type="1">
+<li><strong>User Service</strong>: Rider management and profiles</li>
+<li><strong>Driver Service</strong>: Driver management and
+verification</li>
+<li><strong>Ride Service</strong>: Ride booking and matching</li>
+<li><strong>Payment Service</strong>: Payment processing</li>
+<li><strong>Location Service</strong>: Geospatial queries and
+routing</li>
+<li><strong>Notification Service</strong>: Push notifications and
+alerts</li>
+<li><strong>Rating Service</strong>: Reviews and ratings management</li>
+</ol>
+<hr />
+<h2 id="database-design">Database Design</h2>
+<h3 id="core-tables">Core Tables:</h3>
+<h4 id="users-table">1. Users Table</h4>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode sql"><code class="sourceCode sql"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="kw">CREATE</span> <span class="kw">TABLE</span> users (</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    <span class="kw">id</span> <span class="dt">VARCHAR</span>(<span class="dv">36</span>) <span class="kw">PRIMARY</span> <span class="kw">KEY</span>,</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    name <span class="dt">VARCHAR</span>(<span class="dv">100</span>) <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>    email <span class="dt">VARCHAR</span>(<span class="dv">100</span>) <span class="kw">UNIQUE</span> <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>    phone <span class="dt">VARCHAR</span>(<span class="dv">15</span>) <span class="kw">UNIQUE</span> <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>    address TEXT,</span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>    location_lat <span class="dt">DECIMAL</span>(<span class="dv">10</span>,<span class="dv">8</span>),</span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>    location_lng <span class="dt">DECIMAL</span>(<span class="dv">11</span>,<span class="dv">8</span>),</span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>    rating <span class="dt">DECIMAL</span>(<span class="dv">3</span>,<span class="dv">2</span>) <span class="kw">DEFAULT</span> <span class="fl">0.0</span>,</span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>    total_rides <span class="dt">INT</span> <span class="kw">DEFAULT</span> <span class="dv">0</span>,</span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a>    member_since <span class="dt">TIMESTAMP</span> <span class="kw">DEFAULT</span> <span class="fu">CURRENT_TIMESTAMP</span>,</span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a>    status ENUM(<span class="st">&#39;ACTIVE&#39;</span>, <span class="st">&#39;INACTIVE&#39;</span>, <span class="st">&#39;SUSPENDED&#39;</span>) <span class="kw">DEFAULT</span> <span class="st">&#39;ACTIVE&#39;</span>,</span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>    created_at <span class="dt">TIMESTAMP</span> <span class="kw">DEFAULT</span> <span class="fu">CURRENT_TIMESTAMP</span>,</span>
+<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a>    updated_at <span class="dt">TIMESTAMP</span> <span class="kw">DEFAULT</span> <span class="fu">CURRENT_TIMESTAMP</span> <span class="kw">ON</span> <span class="kw">UPDATE</span> <span class="fu">CURRENT_TIMESTAMP</span></span>
+<span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a>);</span></code></pre></div>
+<h4 id="drivers-table">2. Drivers Table</h4>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sql"><code class="sourceCode sql"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="kw">CREATE</span> <span class="kw">TABLE</span> drivers (</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>    <span class="kw">id</span> <span class="dt">VARCHAR</span>(<span class="dv">36</span>) <span class="kw">PRIMARY</span> <span class="kw">KEY</span>,</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>    user_id <span class="dt">VARCHAR</span>(<span class="dv">36</span>) <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>    license_number <span class="dt">VARCHAR</span>(<span class="dv">50</span>) <span class="kw">UNIQUE</span> <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>    vehicle_id <span class="dt">VARCHAR</span>(<span class="dv">36</span>),</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>    rating <span class="dt">DECIMAL</span>(<span class="dv">3</span>,<span class="dv">2</span>) <span class="kw">DEFAULT</span> <span class="fl">0.0</span>,</span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>    total_rides <span class="dt">INT</span> <span class="kw">DEFAULT</span> <span class="dv">0</span>,</span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>    earnings <span class="dt">DECIMAL</span>(<span class="dv">10</span>,<span class="dv">2</span>) <span class="kw">DEFAULT</span> <span class="fl">0.0</span>,</span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>    status ENUM(<span class="st">&#39;ONLINE&#39;</span>, <span class="st">&#39;OFFLINE&#39;</span>, <span class="st">&#39;BUSY&#39;</span>) <span class="kw">DEFAULT</span> <span class="st">&#39;OFFLINE&#39;</span>,</span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>    verification_status ENUM(<span class="st">&#39;PENDING&#39;</span>, <span class="st">&#39;VERIFIED&#39;</span>, <span class="st">&#39;REJECTED&#39;</span>) <span class="kw">DEFAULT</span> <span class="st">&#39;PENDING&#39;</span>,</span>
+<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a>    documents JSON,</span>
+<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a>    current_location_lat <span class="dt">DECIMAL</span>(<span class="dv">10</span>,<span class="dv">8</span>),</span>
+<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a>    current_location_lng <span class="dt">DECIMAL</span>(<span class="dv">11</span>,<span class="dv">8</span>),</span>
+<span id="cb10-14"><a href="#cb10-14" aria-hidden="true" tabindex="-1"></a>    created_at <span class="dt">TIMESTAMP</span> <span class="kw">DEFAULT</span> <span class="fu">CURRENT_TIMESTAMP</span>,</span>
+<span id="cb10-15"><a href="#cb10-15" aria-hidden="true" tabindex="-1"></a>    updated_at <span class="dt">TIMESTAMP</span> <span class="kw">DEFAULT</span> <span class="fu">CURRENT_TIMESTAMP</span> <span class="kw">ON</span> <span class="kw">UPDATE</span> <span class="fu">CURRENT_TIMESTAMP</span>,</span>
+<span id="cb10-16"><a href="#cb10-16" aria-hidden="true" tabindex="-1"></a>    <span class="kw">FOREIGN</span> <span class="kw">KEY</span> (user_id) <span class="kw">REFERENCES</span> users(<span class="kw">id</span>),</span>
+<span id="cb10-17"><a href="#cb10-17" aria-hidden="true" tabindex="-1"></a>    <span class="kw">FOREIGN</span> <span class="kw">KEY</span> (vehicle_id) <span class="kw">REFERENCES</span> vehicles(<span class="kw">id</span>)</span>
+<span id="cb10-18"><a href="#cb10-18" aria-hidden="true" tabindex="-1"></a>);</span></code></pre></div>
+<h4 id="vehicles-table">3. Vehicles Table</h4>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sql"><code class="sourceCode sql"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="kw">CREATE</span> <span class="kw">TABLE</span> vehicles (</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>    <span class="kw">id</span> <span class="dt">VARCHAR</span>(<span class="dv">36</span>) <span class="kw">PRIMARY</span> <span class="kw">KEY</span>,</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>    driver_id <span class="dt">VARCHAR</span>(<span class="dv">36</span>) <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>    license_plate <span class="dt">VARCHAR</span>(<span class="dv">20</span>) <span class="kw">UNIQUE</span> <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>    model <span class="dt">VARCHAR</span>(<span class="dv">100</span>) <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>    <span class="dt">year</span> <span class="dt">INT</span> <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>    color <span class="dt">VARCHAR</span>(<span class="dv">50</span>),</span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a>    capacity <span class="dt">INT</span> <span class="kw">DEFAULT</span> <span class="dv">4</span>,</span>
+<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a>    features JSON,</span>
+<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a>    insurance_info JSON,</span>
+<span id="cb11-11"><a href="#cb11-11" aria-hidden="true" tabindex="-1"></a>    maintenance_status ENUM(<span class="st">&#39;GOOD&#39;</span>, <span class="st">&#39;MAINTENANCE_DUE&#39;</span>, <span class="st">&#39;OUT_OF_SERVICE&#39;</span>) <span class="kw">DEFAULT</span> <span class="st">&#39;GOOD&#39;</span>,</span>
+<span id="cb11-12"><a href="#cb11-12" aria-hidden="true" tabindex="-1"></a>    created_at <span class="dt">TIMESTAMP</span> <span class="kw">DEFAULT</span> <span class="fu">CURRENT_TIMESTAMP</span>,</span>
+<span id="cb11-13"><a href="#cb11-13" aria-hidden="true" tabindex="-1"></a>    updated_at <span class="dt">TIMESTAMP</span> <span class="kw">DEFAULT</span> <span class="fu">CURRENT_TIMESTAMP</span> <span class="kw">ON</span> <span class="kw">UPDATE</span> <span class="fu">CURRENT_TIMESTAMP</span>,</span>
+<span id="cb11-14"><a href="#cb11-14" aria-hidden="true" tabindex="-1"></a>    <span class="kw">FOREIGN</span> <span class="kw">KEY</span> (driver_id) <span class="kw">REFERENCES</span> drivers(<span class="kw">id</span>)</span>
+<span id="cb11-15"><a href="#cb11-15" aria-hidden="true" tabindex="-1"></a>);</span></code></pre></div>
+<h4 id="rides-table">4. Rides Table</h4>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode sql"><code class="sourceCode sql"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="kw">CREATE</span> <span class="kw">TABLE</span> rides (</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>    <span class="kw">id</span> <span class="dt">VARCHAR</span>(<span class="dv">36</span>) <span class="kw">PRIMARY</span> <span class="kw">KEY</span>,</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>    rider_id <span class="dt">VARCHAR</span>(<span class="dv">36</span>) <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>    driver_id <span class="dt">VARCHAR</span>(<span class="dv">36</span>),</span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>    vehicle_id <span class="dt">VARCHAR</span>(<span class="dv">36</span>),</span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>    pickup_lat <span class="dt">DECIMAL</span>(<span class="dv">10</span>,<span class="dv">8</span>) <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>    pickup_lng <span class="dt">DECIMAL</span>(<span class="dv">11</span>,<span class="dv">8</span>) <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>    dropoff_lat <span class="dt">DECIMAL</span>(<span class="dv">10</span>,<span class="dv">8</span>) <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a>    dropoff_lng <span class="dt">DECIMAL</span>(<span class="dv">11</span>,<span class="dv">8</span>) <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a>    status ENUM(<span class="st">&#39;REQUESTED&#39;</span>, <span class="st">&#39;ACCEPTED&#39;</span>, <span class="st">&#39;STARTED&#39;</span>, <span class="st">&#39;COMPLETED&#39;</span>, <span class="st">&#39;CANCELLED&#39;</span>) <span class="kw">DEFAULT</span> <span class="st">&#39;REQUESTED&#39;</span>,</span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a>    fare <span class="dt">DECIMAL</span>(<span class="dv">10</span>,<span class="dv">2</span>),</span>
+<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a>    distance <span class="dt">DECIMAL</span>(<span class="dv">8</span>,<span class="dv">2</span>),</span>
+<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a>    duration <span class="dt">INT</span>,</span>
+<span id="cb12-14"><a href="#cb12-14" aria-hidden="true" tabindex="-1"></a>    payment_status ENUM(<span class="st">&#39;PENDING&#39;</span>, <span class="st">&#39;PAID&#39;</span>, <span class="st">&#39;REFUNDED&#39;</span>) <span class="kw">DEFAULT</span> <span class="st">&#39;PENDING&#39;</span>,</span>
+<span id="cb12-15"><a href="#cb12-15" aria-hidden="true" tabindex="-1"></a>    created_at <span class="dt">TIMESTAMP</span> <span class="kw">DEFAULT</span> <span class="fu">CURRENT_TIMESTAMP</span>,</span>
+<span id="cb12-16"><a href="#cb12-16" aria-hidden="true" tabindex="-1"></a>    started_at <span class="dt">TIMESTAMP</span> <span class="kw">NULL</span>,</span>
+<span id="cb12-17"><a href="#cb12-17" aria-hidden="true" tabindex="-1"></a>    completed_at <span class="dt">TIMESTAMP</span> <span class="kw">NULL</span>,</span>
+<span id="cb12-18"><a href="#cb12-18" aria-hidden="true" tabindex="-1"></a>    updated_at <span class="dt">TIMESTAMP</span> <span class="kw">DEFAULT</span> <span class="fu">CURRENT_TIMESTAMP</span> <span class="kw">ON</span> <span class="kw">UPDATE</span> <span class="fu">CURRENT_TIMESTAMP</span>,</span>
+<span id="cb12-19"><a href="#cb12-19" aria-hidden="true" tabindex="-1"></a>    <span class="kw">FOREIGN</span> <span class="kw">KEY</span> (rider_id) <span class="kw">REFERENCES</span> users(<span class="kw">id</span>),</span>
+<span id="cb12-20"><a href="#cb12-20" aria-hidden="true" tabindex="-1"></a>    <span class="kw">FOREIGN</span> <span class="kw">KEY</span> (driver_id) <span class="kw">REFERENCES</span> drivers(<span class="kw">id</span>),</span>
+<span id="cb12-21"><a href="#cb12-21" aria-hidden="true" tabindex="-1"></a>    <span class="kw">FOREIGN</span> <span class="kw">KEY</span> (vehicle_id) <span class="kw">REFERENCES</span> vehicles(<span class="kw">id</span>)</span>
+<span id="cb12-22"><a href="#cb12-22" aria-hidden="true" tabindex="-1"></a>);</span></code></pre></div>
+<h4 id="payments-table">5. Payments Table</h4>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode sql"><code class="sourceCode sql"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="kw">CREATE</span> <span class="kw">TABLE</span> payments (</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>    <span class="kw">id</span> <span class="dt">VARCHAR</span>(<span class="dv">36</span>) <span class="kw">PRIMARY</span> <span class="kw">KEY</span>,</span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>    ride_id <span class="dt">VARCHAR</span>(<span class="dv">36</span>) <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>    amount <span class="dt">DECIMAL</span>(<span class="dv">10</span>,<span class="dv">2</span>) <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>    <span class="kw">method</span> ENUM(<span class="st">&#39;CREDIT_CARD&#39;</span>, <span class="st">&#39;DEBIT_CARD&#39;</span>, <span class="st">&#39;WALLET&#39;</span>, <span class="st">&#39;CASH&#39;</span>) <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>    status ENUM(<span class="st">&#39;PENDING&#39;</span>, <span class="st">&#39;SUCCESS&#39;</span>, <span class="st">&#39;FAILED&#39;</span>, <span class="st">&#39;REFUNDED&#39;</span>) <span class="kw">DEFAULT</span> <span class="st">&#39;PENDING&#39;</span>,</span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>    transaction_id <span class="dt">VARCHAR</span>(<span class="dv">100</span>),</span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>    driver_share <span class="dt">DECIMAL</span>(<span class="dv">10</span>,<span class="dv">2</span>),</span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a>    uber_commission <span class="dt">DECIMAL</span>(<span class="dv">10</span>,<span class="dv">2</span>),</span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>    created_at <span class="dt">TIMESTAMP</span> <span class="kw">DEFAULT</span> <span class="fu">CURRENT_TIMESTAMP</span>,</span>
+<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a>    updated_at <span class="dt">TIMESTAMP</span> <span class="kw">DEFAULT</span> <span class="fu">CURRENT_TIMESTAMP</span> <span class="kw">ON</span> <span class="kw">UPDATE</span> <span class="fu">CURRENT_TIMESTAMP</span>,</span>
+<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a>    <span class="kw">FOREIGN</span> <span class="kw">KEY</span> (ride_id) <span class="kw">REFERENCES</span> rides(<span class="kw">id</span>)</span>
+<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a>);</span></code></pre></div>
+<h4 id="ratings-table">6. Ratings Table</h4>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode sql"><code class="sourceCode sql"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="kw">CREATE</span> <span class="kw">TABLE</span> ratings (</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>    <span class="kw">id</span> <span class="dt">VARCHAR</span>(<span class="dv">36</span>) <span class="kw">PRIMARY</span> <span class="kw">KEY</span>,</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>    ride_id <span class="dt">VARCHAR</span>(<span class="dv">36</span>) <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>    rated_by ENUM(<span class="st">&#39;RIDER&#39;</span>, <span class="st">&#39;DRIVER&#39;</span>) <span class="kw">NOT</span> <span class="kw">NULL</span>,</span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>    rating <span class="dt">INT</span> <span class="kw">CHECK</span> (rating <span class="op">&gt;=</span> <span class="dv">1</span> <span class="kw">AND</span> rating <span class="op">&lt;=</span> <span class="dv">5</span>),</span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>    <span class="kw">comment</span> TEXT,</span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a>    created_at <span class="dt">TIMESTAMP</span> <span class="kw">DEFAULT</span> <span class="fu">CURRENT_TIMESTAMP</span>,</span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>    <span class="kw">FOREIGN</span> <span class="kw">KEY</span> (ride_id) <span class="kw">REFERENCES</span> rides(<span class="kw">id</span>)</span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a>);</span></code></pre></div>
+<hr />
+<h2 id="key-workflows">Key Workflows</h2>
+<h3 id="ride-booking-flow">1. Ride Booking Flow</h3>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> RideBookingWorkflow <span class="op">{</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="kw">private</span><span class="op">:</span></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>shared_ptr<span class="op">&lt;</span>RideService<span class="op">&gt;</span> rideService<span class="op">;</span></span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>shared_ptr<span class="op">&lt;</span>LocationService<span class="op">&gt;</span> locationService<span class="op">;</span></span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>shared_ptr<span class="op">&lt;</span>NotificationService<span class="op">&gt;</span> notificationService<span class="op">;</span></span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>shared_ptr<span class="op">&lt;</span>PaymentService<span class="op">&gt;</span> paymentService<span class="op">;</span></span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span><span class="op">:</span></span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>string requestRide<span class="op">(</span><span class="at">const</span> RideRequest<span class="op">&amp;</span> request<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 1. Validate request</span></span>
+<span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> <span class="op">(!</span>validateRideRequest<span class="op">(</span>request<span class="op">))</span> <span class="op">{</span></span>
+<span id="cb15-12"><a href="#cb15-12" aria-hidden="true" tabindex="-1"></a>            <span class="cf">throw</span> <span class="bu">std::</span>runtime_error<span class="op">(</span><span class="st">&quot;Invalid ride request&quot;</span><span class="op">);</span></span>
+<span id="cb15-13"><a href="#cb15-13" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span></span>
+<span id="cb15-14"><a href="#cb15-14" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-15"><a href="#cb15-15" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 2. Find nearby drivers</span></span>
+<span id="cb15-16"><a href="#cb15-16" aria-hidden="true" tabindex="-1"></a>        <span class="kw">auto</span> nearbyDrivers <span class="op">=</span> locationService<span class="op">-&gt;</span>findNearbyDrivers<span class="op">(</span></span>
+<span id="cb15-17"><a href="#cb15-17" aria-hidden="true" tabindex="-1"></a>            request<span class="op">.</span>pickupLocation<span class="op">,</span> </span>
+<span id="cb15-18"><a href="#cb15-18" aria-hidden="true" tabindex="-1"></a>            request<span class="op">.</span>radius</span>
+<span id="cb15-19"><a href="#cb15-19" aria-hidden="true" tabindex="-1"></a>        <span class="op">);</span></span>
+<span id="cb15-20"><a href="#cb15-20" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-21"><a href="#cb15-21" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> <span class="op">(</span>nearbyDrivers<span class="op">.</span>empty<span class="op">())</span> <span class="op">{</span></span>
+<span id="cb15-22"><a href="#cb15-22" aria-hidden="true" tabindex="-1"></a>            <span class="cf">throw</span> <span class="bu">std::</span>runtime_error<span class="op">(</span><span class="st">&quot;No drivers available&quot;</span><span class="op">);</span></span>
+<span id="cb15-23"><a href="#cb15-23" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span></span>
+<span id="cb15-24"><a href="#cb15-24" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-25"><a href="#cb15-25" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 3. Calculate fare</span></span>
+<span id="cb15-26"><a href="#cb15-26" aria-hidden="true" tabindex="-1"></a>        <span class="dt">double</span> fare <span class="op">=</span> calculateFare<span class="op">(</span>request<span class="op">.</span>pickupLocation<span class="op">,</span> request<span class="op">.</span>dropoffLocation<span class="op">);</span></span>
+<span id="cb15-27"><a href="#cb15-27" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-28"><a href="#cb15-28" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 4. Create ride request</span></span>
+<span id="cb15-29"><a href="#cb15-29" aria-hidden="true" tabindex="-1"></a>        <span class="kw">auto</span> ride <span class="op">=</span> <span class="bu">std::</span>make_shared<span class="op">&lt;</span>Ride<span class="op">&gt;(</span>request<span class="op">,</span> fare<span class="op">);</span></span>
+<span id="cb15-30"><a href="#cb15-30" aria-hidden="true" tabindex="-1"></a>        <span class="bu">std::</span>string rideId <span class="op">=</span> rideService<span class="op">-&gt;</span>createRide<span class="op">(</span>ride<span class="op">);</span></span>
+<span id="cb15-31"><a href="#cb15-31" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-32"><a href="#cb15-32" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 5. Send notifications to drivers</span></span>
+<span id="cb15-33"><a href="#cb15-33" aria-hidden="true" tabindex="-1"></a>        notificationService<span class="op">-&gt;</span>notifyDrivers<span class="op">(</span>nearbyDrivers<span class="op">,</span> ride<span class="op">);</span></span>
+<span id="cb15-34"><a href="#cb15-34" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-35"><a href="#cb15-35" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 6. Send confirmation to rider</span></span>
+<span id="cb15-36"><a href="#cb15-36" aria-hidden="true" tabindex="-1"></a>        notificationService<span class="op">-&gt;</span>notifyRider<span class="op">(</span>request<span class="op">.</span>riderId<span class="op">,</span> <span class="st">&quot;RIDE_REQUESTED&quot;</span><span class="op">,</span> ride<span class="op">);</span></span>
+<span id="cb15-37"><a href="#cb15-37" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-38"><a href="#cb15-38" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> rideId<span class="op">;</span></span>
+<span id="cb15-39"><a href="#cb15-39" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb15-40"><a href="#cb15-40" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb15-41"><a href="#cb15-41" aria-hidden="true" tabindex="-1"></a>    <span class="dt">void</span> acceptRide<span class="op">(</span><span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> rideId<span class="op">,</span> <span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> driverId<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb15-42"><a href="#cb15-42" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 1. Update ride status</span></span>
+<span id="cb15-43"><a href="#cb15-43" aria-hidden="true" tabindex="-1"></a>        rideService<span class="op">-&gt;</span>acceptRide<span class="op">(</span>rideId<span class="op">,</span> driverId<span class="op">);</span></span>
+<span id="cb15-44"><a href="#cb15-44" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-45"><a href="#cb15-45" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 2. Update driver status</span></span>
+<span id="cb15-46"><a href="#cb15-46" aria-hidden="true" tabindex="-1"></a>        rideService<span class="op">-&gt;</span>updateDriverStatus<span class="op">(</span>driverId<span class="op">,</span> <span class="st">&quot;BUSY&quot;</span><span class="op">);</span></span>
+<span id="cb15-47"><a href="#cb15-47" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-48"><a href="#cb15-48" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 3. Send notifications</span></span>
+<span id="cb15-49"><a href="#cb15-49" aria-hidden="true" tabindex="-1"></a>        <span class="kw">auto</span> ride <span class="op">=</span> rideService<span class="op">-&gt;</span>getRide<span class="op">(</span>rideId<span class="op">);</span></span>
+<span id="cb15-50"><a href="#cb15-50" aria-hidden="true" tabindex="-1"></a>        notificationService<span class="op">-&gt;</span>notifyRider<span class="op">(</span>ride<span class="op">-&gt;</span>getRiderId<span class="op">(),</span> <span class="st">&quot;RIDE_ACCEPTED&quot;</span><span class="op">,</span> ride<span class="op">);</span></span>
+<span id="cb15-51"><a href="#cb15-51" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-52"><a href="#cb15-52" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 4. Start real-time tracking</span></span>
+<span id="cb15-53"><a href="#cb15-53" aria-hidden="true" tabindex="-1"></a>        locationService<span class="op">-&gt;</span>startTracking<span class="op">(</span>rideId<span class="op">);</span></span>
+<span id="cb15-54"><a href="#cb15-54" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb15-55"><a href="#cb15-55" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb15-56"><a href="#cb15-56" aria-hidden="true" tabindex="-1"></a>    <span class="dt">void</span> startRide<span class="op">(</span><span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> rideId<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb15-57"><a href="#cb15-57" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 1. Update ride status</span></span>
+<span id="cb15-58"><a href="#cb15-58" aria-hidden="true" tabindex="-1"></a>        rideService<span class="op">-&gt;</span>startRide<span class="op">(</span>rideId<span class="op">);</span></span>
+<span id="cb15-59"><a href="#cb15-59" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-60"><a href="#cb15-60" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 2. Start fare calculation</span></span>
+<span id="cb15-61"><a href="#cb15-61" aria-hidden="true" tabindex="-1"></a>        rideService<span class="op">-&gt;</span>startFareCalculation<span class="op">(</span>rideId<span class="op">);</span></span>
+<span id="cb15-62"><a href="#cb15-62" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-63"><a href="#cb15-63" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 3. Send notifications</span></span>
+<span id="cb15-64"><a href="#cb15-64" aria-hidden="true" tabindex="-1"></a>        <span class="kw">auto</span> ride <span class="op">=</span> rideService<span class="op">-&gt;</span>getRide<span class="op">(</span>rideId<span class="op">);</span></span>
+<span id="cb15-65"><a href="#cb15-65" aria-hidden="true" tabindex="-1"></a>        notificationService<span class="op">-&gt;</span>notifyRider<span class="op">(</span>ride<span class="op">-&gt;</span>getRiderId<span class="op">(),</span> <span class="st">&quot;RIDE_STARTED&quot;</span><span class="op">,</span> ride<span class="op">);</span></span>
+<span id="cb15-66"><a href="#cb15-66" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb15-67"><a href="#cb15-67" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb15-68"><a href="#cb15-68" aria-hidden="true" tabindex="-1"></a>    <span class="dt">void</span> completeRide<span class="op">(</span><span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> rideId<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb15-69"><a href="#cb15-69" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 1. Calculate final fare</span></span>
+<span id="cb15-70"><a href="#cb15-70" aria-hidden="true" tabindex="-1"></a>        <span class="dt">double</span> finalFare <span class="op">=</span> rideService<span class="op">-&gt;</span>calculateFinalFare<span class="op">(</span>rideId<span class="op">);</span></span>
+<span id="cb15-71"><a href="#cb15-71" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-72"><a href="#cb15-72" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 2. Update ride status</span></span>
+<span id="cb15-73"><a href="#cb15-73" aria-hidden="true" tabindex="-1"></a>        rideService<span class="op">-&gt;</span>completeRide<span class="op">(</span>rideId<span class="op">,</span> finalFare<span class="op">);</span></span>
+<span id="cb15-74"><a href="#cb15-74" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-75"><a href="#cb15-75" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 3. Process payment</span></span>
+<span id="cb15-76"><a href="#cb15-76" aria-hidden="true" tabindex="-1"></a>        paymentService<span class="op">-&gt;</span>processPayment<span class="op">(</span>rideId<span class="op">,</span> finalFare<span class="op">);</span></span>
+<span id="cb15-77"><a href="#cb15-77" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-78"><a href="#cb15-78" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 4. Update driver earnings</span></span>
+<span id="cb15-79"><a href="#cb15-79" aria-hidden="true" tabindex="-1"></a>        rideService<span class="op">-&gt;</span>updateDriverEarnings<span class="op">(</span>rideId<span class="op">);</span></span>
+<span id="cb15-80"><a href="#cb15-80" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-81"><a href="#cb15-81" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 5. Request ratings</span></span>
+<span id="cb15-82"><a href="#cb15-82" aria-hidden="true" tabindex="-1"></a>        <span class="kw">auto</span> ride <span class="op">=</span> rideService<span class="op">-&gt;</span>getRide<span class="op">(</span>rideId<span class="op">);</span></span>
+<span id="cb15-83"><a href="#cb15-83" aria-hidden="true" tabindex="-1"></a>        notificationService<span class="op">-&gt;</span>requestRating<span class="op">(</span>ride<span class="op">);</span></span>
+<span id="cb15-84"><a href="#cb15-84" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb15-85"><a href="#cb15-85" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 6. Update driver status</span></span>
+<span id="cb15-86"><a href="#cb15-86" aria-hidden="true" tabindex="-1"></a>        rideService<span class="op">-&gt;</span>updateDriverStatus<span class="op">(</span>ride<span class="op">-&gt;</span>getDriverId<span class="op">(),</span> <span class="st">&quot;ONLINE&quot;</span><span class="op">);</span></span>
+<span id="cb15-87"><a href="#cb15-87" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb15-88"><a href="#cb15-88" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span></code></pre></div>
+<h3 id="driver-onboarding-flow">2. Driver Onboarding Flow</h3>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> DriverOnboardingWorkflow <span class="op">{</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="kw">private</span><span class="op">:</span></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>shared_ptr<span class="op">&lt;</span>DriverService<span class="op">&gt;</span> driverService<span class="op">;</span></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>shared_ptr<span class="op">&lt;</span>VerificationService<span class="op">&gt;</span> verificationService<span class="op">;</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>shared_ptr<span class="op">&lt;</span>NotificationService<span class="op">&gt;</span> notificationService<span class="op">;</span></span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span><span class="op">:</span></span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>string onboardDriver<span class="op">(</span><span class="at">const</span> DriverOnboardingRequest<span class="op">&amp;</span> request<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 1. Create user account</span></span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a>        <span class="kw">auto</span> user <span class="op">=</span> <span class="bu">std::</span>make_shared<span class="op">&lt;</span>User<span class="op">&gt;(</span>request<span class="op">.</span>userData<span class="op">);</span></span>
+<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a>        <span class="bu">std::</span>string userId <span class="op">=</span> driverService<span class="op">-&gt;</span>createUser<span class="op">(</span>user<span class="op">);</span></span>
+<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb16-13"><a href="#cb16-13" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 2. Create driver profile</span></span>
+<span id="cb16-14"><a href="#cb16-14" aria-hidden="true" tabindex="-1"></a>        <span class="kw">auto</span> driver <span class="op">=</span> <span class="bu">std::</span>make_shared<span class="op">&lt;</span>Driver<span class="op">&gt;(</span>request<span class="op">.</span>driverData<span class="op">);</span></span>
+<span id="cb16-15"><a href="#cb16-15" aria-hidden="true" tabindex="-1"></a>        driver<span class="op">-&gt;</span>setUserId<span class="op">(</span>userId<span class="op">);</span></span>
+<span id="cb16-16"><a href="#cb16-16" aria-hidden="true" tabindex="-1"></a>        <span class="bu">std::</span>string driverId <span class="op">=</span> driverService<span class="op">-&gt;</span>createDriver<span class="op">(</span>driver<span class="op">);</span></span>
+<span id="cb16-17"><a href="#cb16-17" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb16-18"><a href="#cb16-18" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 3. Add vehicle information</span></span>
+<span id="cb16-19"><a href="#cb16-19" aria-hidden="true" tabindex="-1"></a>        <span class="kw">auto</span> vehicle <span class="op">=</span> <span class="bu">std::</span>make_shared<span class="op">&lt;</span>Vehicle<span class="op">&gt;(</span>request<span class="op">.</span>vehicleData<span class="op">);</span></span>
+<span id="cb16-20"><a href="#cb16-20" aria-hidden="true" tabindex="-1"></a>        vehicle<span class="op">-&gt;</span>setDriverId<span class="op">(</span>driverId<span class="op">);</span></span>
+<span id="cb16-21"><a href="#cb16-21" aria-hidden="true" tabindex="-1"></a>        driverService<span class="op">-&gt;</span>addVehicle<span class="op">(</span>vehicle<span class="op">);</span></span>
+<span id="cb16-22"><a href="#cb16-22" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb16-23"><a href="#cb16-23" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 4. Upload documents</span></span>
+<span id="cb16-24"><a href="#cb16-24" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> <span class="op">(</span><span class="at">const</span> <span class="kw">auto</span><span class="op">&amp;</span> document <span class="op">:</span> request<span class="op">.</span>documents<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb16-25"><a href="#cb16-25" aria-hidden="true" tabindex="-1"></a>            driverService<span class="op">-&gt;</span>uploadDocument<span class="op">(</span>driverId<span class="op">,</span> document<span class="op">);</span></span>
+<span id="cb16-26"><a href="#cb16-26" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span></span>
+<span id="cb16-27"><a href="#cb16-27" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb16-28"><a href="#cb16-28" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 5. Initiate background check</span></span>
+<span id="cb16-29"><a href="#cb16-29" aria-hidden="true" tabindex="-1"></a>        verificationService<span class="op">-&gt;</span>initiateBackgroundCheck<span class="op">(</span>driverId<span class="op">);</span></span>
+<span id="cb16-30"><a href="#cb16-30" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb16-31"><a href="#cb16-31" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 6. Send welcome notification</span></span>
+<span id="cb16-32"><a href="#cb16-32" aria-hidden="true" tabindex="-1"></a>        notificationService<span class="op">-&gt;</span>notifyDriver<span class="op">(</span>driverId<span class="op">,</span> <span class="st">&quot;WELCOME&quot;</span><span class="op">,</span> <span class="op">{});</span></span>
+<span id="cb16-33"><a href="#cb16-33" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb16-34"><a href="#cb16-34" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> driverId<span class="op">;</span></span>
+<span id="cb16-35"><a href="#cb16-35" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb16-36"><a href="#cb16-36" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb16-37"><a href="#cb16-37" aria-hidden="true" tabindex="-1"></a>    <span class="dt">void</span> verifyDriver<span class="op">(</span><span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> driverId<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb16-38"><a href="#cb16-38" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 1. Update verification status</span></span>
+<span id="cb16-39"><a href="#cb16-39" aria-hidden="true" tabindex="-1"></a>        driverService<span class="op">-&gt;</span>updateVerificationStatus<span class="op">(</span>driverId<span class="op">,</span> <span class="st">&quot;VERIFIED&quot;</span><span class="op">);</span></span>
+<span id="cb16-40"><a href="#cb16-40" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb16-41"><a href="#cb16-41" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 2. Activate driver</span></span>
+<span id="cb16-42"><a href="#cb16-42" aria-hidden="true" tabindex="-1"></a>        driverService<span class="op">-&gt;</span>activateDriver<span class="op">(</span>driverId<span class="op">);</span></span>
+<span id="cb16-43"><a href="#cb16-43" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb16-44"><a href="#cb16-44" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 3. Send verification notification</span></span>
+<span id="cb16-45"><a href="#cb16-45" aria-hidden="true" tabindex="-1"></a>        notificationService<span class="op">-&gt;</span>notifyDriver<span class="op">(</span>driverId<span class="op">,</span> <span class="st">&quot;VERIFIED&quot;</span><span class="op">,</span> <span class="op">{});</span></span>
+<span id="cb16-46"><a href="#cb16-46" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb16-47"><a href="#cb16-47" aria-hidden="true" tabindex="-1"></a>        <span class="co">// 4. Update availability</span></span>
+<span id="cb16-48"><a href="#cb16-48" aria-hidden="true" tabindex="-1"></a>        driverService<span class="op">-&gt;</span>updateAvailability<span class="op">(</span>driverId<span class="op">,</span> <span class="kw">true</span><span class="op">);</span></span>
+<span id="cb16-49"><a href="#cb16-49" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb16-50"><a href="#cb16-50" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span></code></pre></div>
+<hr />
+<h2 id="design-patterns">Design Patterns</h2>
+<h3 id="strategy-pattern---payment-methods">1. Strategy Pattern -
+Payment Methods</h3>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> PaymentStrategy <span class="op">{</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span><span class="op">:</span></span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>    <span class="kw">virtual</span> <span class="op">~</span>PaymentStrategy<span class="op">()</span> <span class="op">=</span> <span class="cf">default</span><span class="op">;</span></span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a>    <span class="kw">virtual</span> <span class="dt">bool</span> processPayment<span class="op">(</span><span class="dt">double</span> amount<span class="op">,</span> <span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> currency<span class="op">)</span> <span class="op">=</span> <span class="dv">0</span><span class="op">;</span></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a>    <span class="kw">virtual</span> <span class="bu">std::</span>string getPaymentMethod<span class="op">()</span> <span class="at">const</span> <span class="op">=</span> <span class="dv">0</span><span class="op">;</span></span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> CreditCardStrategy <span class="op">:</span> <span class="kw">public</span> PaymentStrategy <span class="op">{</span></span>
+<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span><span class="op">:</span></span>
+<span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a>    <span class="dt">bool</span> processPayment<span class="op">(</span><span class="dt">double</span> amount<span class="op">,</span> <span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> currency<span class="op">)</span> <span class="kw">override</span> <span class="op">{</span></span>
+<span id="cb17-11"><a href="#cb17-11" aria-hidden="true" tabindex="-1"></a>        <span class="co">// Credit card processing logic</span></span>
+<span id="cb17-12"><a href="#cb17-12" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="kw">true</span><span class="op">;</span></span>
+<span id="cb17-13"><a href="#cb17-13" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb17-14"><a href="#cb17-14" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>string getPaymentMethod<span class="op">()</span> <span class="at">const</span> <span class="kw">override</span> <span class="op">{</span> <span class="cf">return</span> <span class="st">&quot;CreditCard&quot;</span><span class="op">;</span> <span class="op">}</span></span>
+<span id="cb17-15"><a href="#cb17-15" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span>
+<span id="cb17-16"><a href="#cb17-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-17"><a href="#cb17-17" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> WalletStrategy <span class="op">:</span> <span class="kw">public</span> PaymentStrategy <span class="op">{</span></span>
+<span id="cb17-18"><a href="#cb17-18" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span><span class="op">:</span></span>
+<span id="cb17-19"><a href="#cb17-19" aria-hidden="true" tabindex="-1"></a>    <span class="dt">bool</span> processPayment<span class="op">(</span><span class="dt">double</span> amount<span class="op">,</span> <span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> currency<span class="op">)</span> <span class="kw">override</span> <span class="op">{</span></span>
+<span id="cb17-20"><a href="#cb17-20" aria-hidden="true" tabindex="-1"></a>        <span class="co">// Wallet processing logic</span></span>
+<span id="cb17-21"><a href="#cb17-21" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="kw">true</span><span class="op">;</span></span>
+<span id="cb17-22"><a href="#cb17-22" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb17-23"><a href="#cb17-23" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>string getPaymentMethod<span class="op">()</span> <span class="at">const</span> <span class="kw">override</span> <span class="op">{</span> <span class="cf">return</span> <span class="st">&quot;Wallet&quot;</span><span class="op">;</span> <span class="op">}</span></span>
+<span id="cb17-24"><a href="#cb17-24" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span></code></pre></div>
+<h3 id="state-pattern---ride-states">2. State Pattern - Ride States</h3>
+<div class="sourceCode" id="cb18"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> RideState <span class="op">{</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span><span class="op">:</span></span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>    <span class="kw">virtual</span> <span class="op">~</span>RideState<span class="op">()</span> <span class="op">=</span> <span class="cf">default</span><span class="op">;</span></span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a>    <span class="kw">virtual</span> <span class="dt">void</span> handle<span class="op">(</span>Ride<span class="op">*</span> ride<span class="op">)</span> <span class="op">=</span> <span class="dv">0</span><span class="op">;</span></span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a>    <span class="kw">virtual</span> <span class="bu">std::</span>string getStateName<span class="op">()</span> <span class="at">const</span> <span class="op">=</span> <span class="dv">0</span><span class="op">;</span></span>
+<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>    <span class="kw">virtual</span> <span class="dt">bool</span> canTransitionTo<span class="op">(</span><span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> newState<span class="op">)</span> <span class="at">const</span> <span class="op">=</span> <span class="dv">0</span><span class="op">;</span></span>
+<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span>
+<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-9"><a href="#cb18-9" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> RequestedState <span class="op">:</span> <span class="kw">public</span> RideState <span class="op">{</span></span>
+<span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span><span class="op">:</span></span>
+<span id="cb18-11"><a href="#cb18-11" aria-hidden="true" tabindex="-1"></a>    <span class="dt">void</span> handle<span class="op">(</span>Ride<span class="op">*</span> ride<span class="op">)</span> <span class="kw">override</span> <span class="op">{</span></span>
+<span id="cb18-12"><a href="#cb18-12" aria-hidden="true" tabindex="-1"></a>        <span class="co">// Send notifications to nearby drivers</span></span>
+<span id="cb18-13"><a href="#cb18-13" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb18-14"><a href="#cb18-14" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>string getStateName<span class="op">()</span> <span class="at">const</span> <span class="kw">override</span> <span class="op">{</span> <span class="cf">return</span> <span class="st">&quot;REQUESTED&quot;</span><span class="op">;</span> <span class="op">}</span></span>
+<span id="cb18-15"><a href="#cb18-15" aria-hidden="true" tabindex="-1"></a>    <span class="dt">bool</span> canTransitionTo<span class="op">(</span><span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> newState<span class="op">)</span> <span class="at">const</span> <span class="kw">override</span> <span class="op">{</span></span>
+<span id="cb18-16"><a href="#cb18-16" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> newState <span class="op">==</span> <span class="st">&quot;ACCEPTED&quot;</span> <span class="op">||</span> newState <span class="op">==</span> <span class="st">&quot;CANCELLED&quot;</span><span class="op">;</span></span>
+<span id="cb18-17"><a href="#cb18-17" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb18-18"><a href="#cb18-18" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span>
+<span id="cb18-19"><a href="#cb18-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-20"><a href="#cb18-20" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> AcceptedState <span class="op">:</span> <span class="kw">public</span> RideState <span class="op">{</span></span>
+<span id="cb18-21"><a href="#cb18-21" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span><span class="op">:</span></span>
+<span id="cb18-22"><a href="#cb18-22" aria-hidden="true" tabindex="-1"></a>    <span class="dt">void</span> handle<span class="op">(</span>Ride<span class="op">*</span> ride<span class="op">)</span> <span class="kw">override</span> <span class="op">{</span></span>
+<span id="cb18-23"><a href="#cb18-23" aria-hidden="true" tabindex="-1"></a>        <span class="co">// Notify rider and start tracking</span></span>
+<span id="cb18-24"><a href="#cb18-24" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb18-25"><a href="#cb18-25" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>string getStateName<span class="op">()</span> <span class="at">const</span> <span class="kw">override</span> <span class="op">{</span> <span class="cf">return</span> <span class="st">&quot;ACCEPTED&quot;</span><span class="op">;</span> <span class="op">}</span></span>
+<span id="cb18-26"><a href="#cb18-26" aria-hidden="true" tabindex="-1"></a>    <span class="dt">bool</span> canTransitionTo<span class="op">(</span><span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> newState<span class="op">)</span> <span class="at">const</span> <span class="kw">override</span> <span class="op">{</span></span>
+<span id="cb18-27"><a href="#cb18-27" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> newState <span class="op">==</span> <span class="st">&quot;STARTED&quot;</span> <span class="op">||</span> newState <span class="op">==</span> <span class="st">&quot;CANCELLED&quot;</span><span class="op">;</span></span>
+<span id="cb18-28"><a href="#cb18-28" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb18-29"><a href="#cb18-29" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span>
+<span id="cb18-30"><a href="#cb18-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-31"><a href="#cb18-31" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> StartedState <span class="op">:</span> <span class="kw">public</span> RideState <span class="op">{</span></span>
+<span id="cb18-32"><a href="#cb18-32" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span><span class="op">:</span></span>
+<span id="cb18-33"><a href="#cb18-33" aria-hidden="true" tabindex="-1"></a>    <span class="dt">void</span> handle<span class="op">(</span>Ride<span class="op">*</span> ride<span class="op">)</span> <span class="kw">override</span> <span class="op">{</span></span>
+<span id="cb18-34"><a href="#cb18-34" aria-hidden="true" tabindex="-1"></a>        <span class="co">// Start fare calculation and tracking</span></span>
+<span id="cb18-35"><a href="#cb18-35" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb18-36"><a href="#cb18-36" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>string getStateName<span class="op">()</span> <span class="at">const</span> <span class="kw">override</span> <span class="op">{</span> <span class="cf">return</span> <span class="st">&quot;STARTED&quot;</span><span class="op">;</span> <span class="op">}</span></span>
+<span id="cb18-37"><a href="#cb18-37" aria-hidden="true" tabindex="-1"></a>    <span class="dt">bool</span> canTransitionTo<span class="op">(</span><span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> newState<span class="op">)</span> <span class="at">const</span> <span class="kw">override</span> <span class="op">{</span></span>
+<span id="cb18-38"><a href="#cb18-38" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> newState <span class="op">==</span> <span class="st">&quot;COMPLETED&quot;</span> <span class="op">||</span> newState <span class="op">==</span> <span class="st">&quot;CANCELLED&quot;</span><span class="op">;</span></span>
+<span id="cb18-39"><a href="#cb18-39" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb18-40"><a href="#cb18-40" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span>
+<span id="cb18-41"><a href="#cb18-41" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-42"><a href="#cb18-42" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> CompletedState <span class="op">:</span> <span class="kw">public</span> RideState <span class="op">{</span></span>
+<span id="cb18-43"><a href="#cb18-43" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span><span class="op">:</span></span>
+<span id="cb18-44"><a href="#cb18-44" aria-hidden="true" tabindex="-1"></a>    <span class="dt">void</span> handle<span class="op">(</span>Ride<span class="op">*</span> ride<span class="op">)</span> <span class="kw">override</span> <span class="op">{</span></span>
+<span id="cb18-45"><a href="#cb18-45" aria-hidden="true" tabindex="-1"></a>        <span class="co">// Process payment and request ratings</span></span>
+<span id="cb18-46"><a href="#cb18-46" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb18-47"><a href="#cb18-47" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>string getStateName<span class="op">()</span> <span class="at">const</span> <span class="kw">override</span> <span class="op">{</span> <span class="cf">return</span> <span class="st">&quot;COMPLETED&quot;</span><span class="op">;</span> <span class="op">}</span></span>
+<span id="cb18-48"><a href="#cb18-48" aria-hidden="true" tabindex="-1"></a>    <span class="dt">bool</span> canTransitionTo<span class="op">(</span><span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> newState<span class="op">)</span> <span class="at">const</span> <span class="kw">override</span> <span class="op">{</span></span>
+<span id="cb18-49"><a href="#cb18-49" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="kw">false</span><span class="op">;</span> <span class="co">// Final state</span></span>
+<span id="cb18-50"><a href="#cb18-50" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb18-51"><a href="#cb18-51" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span></code></pre></div>
+<h3 id="observer-pattern---real-time-updates">3. Observer Pattern -
+Real-time Updates</h3>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> LocationObserver <span class="op">{</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span><span class="op">:</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>    <span class="kw">virtual</span> <span class="op">~</span>LocationObserver<span class="op">()</span> <span class="op">=</span> <span class="cf">default</span><span class="op">;</span></span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a>    <span class="kw">virtual</span> <span class="dt">void</span> updateLocation<span class="op">(</span><span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> rideId<span class="op">,</span> <span class="dt">double</span> lat<span class="op">,</span> <span class="dt">double</span> lng<span class="op">)</span> <span class="op">=</span> <span class="dv">0</span><span class="op">;</span></span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> NotificationObserver <span class="op">:</span> <span class="kw">public</span> LocationObserver <span class="op">{</span></span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span><span class="op">:</span></span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a>    <span class="dt">void</span> updateLocation<span class="op">(</span><span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> rideId<span class="op">,</span> <span class="dt">double</span> lat<span class="op">,</span> <span class="dt">double</span> lng<span class="op">)</span> <span class="kw">override</span> <span class="op">{</span></span>
+<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a>        <span class="co">// Send real-time location updates to rider</span></span>
+<span id="cb19-11"><a href="#cb19-11" aria-hidden="true" tabindex="-1"></a>        <span class="bu">std::</span>cout <span class="op">&lt;&lt;</span> <span class="st">&quot;Sending location update for ride: &quot;</span> <span class="op">&lt;&lt;</span> rideId <span class="op">&lt;&lt;</span> <span class="bu">std::</span>endl<span class="op">;</span></span>
+<span id="cb19-12"><a href="#cb19-12" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb19-13"><a href="#cb19-13" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span>
+<span id="cb19-14"><a href="#cb19-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-15"><a href="#cb19-15" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> TrackingObserver <span class="op">:</span> <span class="kw">public</span> LocationObserver <span class="op">{</span></span>
+<span id="cb19-16"><a href="#cb19-16" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span><span class="op">:</span></span>
+<span id="cb19-17"><a href="#cb19-17" aria-hidden="true" tabindex="-1"></a>    <span class="dt">void</span> updateLocation<span class="op">(</span><span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> rideId<span class="op">,</span> <span class="dt">double</span> lat<span class="op">,</span> <span class="dt">double</span> lng<span class="op">)</span> <span class="kw">override</span> <span class="op">{</span></span>
+<span id="cb19-18"><a href="#cb19-18" aria-hidden="true" tabindex="-1"></a>        <span class="co">// Update ride tracking information</span></span>
+<span id="cb19-19"><a href="#cb19-19" aria-hidden="true" tabindex="-1"></a>        <span class="bu">std::</span>cout <span class="op">&lt;&lt;</span> <span class="st">&quot;Updating tracking for ride: &quot;</span> <span class="op">&lt;&lt;</span> rideId <span class="op">&lt;&lt;</span> <span class="bu">std::</span>endl<span class="op">;</span></span>
+<span id="cb19-20"><a href="#cb19-20" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb19-21"><a href="#cb19-21" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span></code></pre></div>
+<hr />
+<h2 id="technical-considerations">Technical Considerations</h2>
+<h3 id="scalability">1. Scalability</h3>
+<ul>
+<li><strong>Microservices architecture</strong> for independent
+scaling</li>
+<li><strong>Database sharding</strong> by location/region</li>
+<li><strong>Caching</strong> for frequently accessed data</li>
+<li><strong>Load balancing</strong> for API requests</li>
+</ul>
+<h3 id="performance">2. Performance</h3>
+<ul>
+<li><strong>Geospatial indexing</strong> for location-based queries</li>
+<li><strong>Real-time tracking</strong> using WebSockets</li>
+<li><strong>Payment processing</strong> with retry mechanisms</li>
+<li><strong>Background job processing</strong> for notifications</li>
+</ul>
+<h3 id="reliability">3. Reliability</h3>
+<ul>
+<li><strong>Circuit breakers</strong> for external service calls</li>
+<li><strong>Retry mechanisms</strong> for failed operations</li>
+<li><strong>Data consistency</strong> with distributed transactions</li>
+<li><strong>Monitoring and alerting</strong> for system health</li>
+</ul>
+<h3 id="security">4. Security</h3>
+<ul>
+<li><strong>JWT tokens</strong> for authentication</li>
+<li><strong>Role-based access control</strong> (RBAC)</li>
+<li><strong>Data encryption</strong> at rest and in transit</li>
+<li><strong>Rate limiting</strong> for API protection</li>
+</ul>
+<hr />
+<h2 id="interview-flow">Interview Flow</h2>
+<h3 id="step-1-clarify-requirements-2-minutes">Step 1: Clarify
+Requirements (2 minutes)</h3>
+<pre><code>❓ &quot;Let me understand the requirements first...&quot;
+- What are the main features?
+- What&#39;s the scale (users, rides per day)?
+- Any specific constraints?
+- What&#39;s the primary use case?</code></pre>
+<h3 id="step-2-identify-entities-1-minute">Step 2: Identify Entities (1
+minute)</h3>
+<pre><code>✅ &quot;The main entities are:&quot;
+- User (Rider)
+- Driver
+- Vehicle
+- Ride
+- Payment
+- Rating</code></pre>
+<h3 id="step-3-design-database-2-minutes">Step 3: Design Database (2
+minutes)</h3>
+<pre><code>✅ &quot;I&#39;ll design the database with these tables:&quot;
+- Users table for riders
+- Drivers table for drivers
+- Vehicles table for vehicle info
+- Rides table for ride details
+- Payments table for transactions
+- Ratings table for reviews</code></pre>
+<h3 id="step-4-choose-architecture-2-minutes">Step 4: Choose
+Architecture (2 minutes)</h3>
+<pre><code>✅ &quot;I&#39;ll use microservices architecture:&quot;
+- User Service for rider management
+- Driver Service for driver management
+- Ride Service for ride booking
+- Payment Service for transactions
+- Location Service for geospatial queries
+- Notification Service for alerts</code></pre>
+<h3 id="step-5-explain-workflows-2-minutes">Step 5: Explain Workflows (2
+minutes)</h3>
+<pre><code>✅ &quot;The key workflows are:&quot;
+- Ride booking flow
+- Driver onboarding flow
+- Payment processing flow
+- Real-time tracking flow</code></pre>
+<h3 id="step-6-discuss-patterns-1-minute">Step 6: Discuss Patterns (1
+minute)</h3>
+<pre><code>✅ &quot;I&#39;ll use these design patterns:&quot;
+- Strategy Pattern for payment methods
+- State Pattern for ride states
+- Observer Pattern for real-time updates
+- Factory Pattern for service creation</code></pre>
+<h3 id="step-7-address-concerns-1-minute">Step 7: Address Concerns (1
+minute)</h3>
+<pre><code>✅ &quot;For scalability and performance:&quot;
+- Database sharding by location
+- Caching for frequent queries
+- Load balancing for high traffic
+- Real-time updates via WebSockets</code></pre>
+<hr />
+<h2 id="key-interview-tips">Key Interview Tips</h2>
+<h3 id="dos">Do’s:</h3>
+<ul>
+<li>✅ Start with requirements clarification</li>
+<li>✅ Draw diagrams and explain them</li>
+<li>✅ Discuss trade-offs and alternatives</li>
+<li>✅ Consider edge cases and error handling</li>
+<li>✅ Mention scalability and performance</li>
+</ul>
+<h3 id="donts">Don’ts:</h3>
+<ul>
+<li>❌ Jump straight into implementation</li>
+<li>❌ Ignore non-functional requirements</li>
+<li>❌ Forget about error handling</li>
+<li>❌ Over-engineer simple problems</li>
+<li>❌ Ignore security considerations</li>
+</ul>
+<h3 id="always-mention">Always Mention:</h3>
+<ul>
+<li>✅ Error handling and edge cases</li>
+<li>✅ Scalability considerations</li>
+<li>✅ Security aspects</li>
+<li>✅ Performance optimization</li>
+<li>✅ Monitoring and logging</li>
+</ul>
+<hr />
+<h2 id="conclusion">Conclusion</h2>
+<p>This Uber system design demonstrates:</p>
+<ol type="1">
+<li><strong>Clear understanding of requirements</strong></li>
+<li><strong>Proper entity modeling and relationships</strong></li>
+<li><strong>Scalable microservices architecture</strong></li>
+<li><strong>Appropriate use of design patterns</strong></li>
+<li><strong>Production-ready technical considerations</strong></li>
+</ol>
+<p>The design is <strong>interview-ready</strong> and shows systematic
+thinking suitable for an SDE1 position.</p>

@@ -1,0 +1,17 @@
+add_executable(01_TicTacToe
+    main.cpp
+    CommonEnum/Symbol.cpp
+    Utility/Board.cpp
+    Utility/Player.cpp
+    Utility/Position.cpp
+    PlayerStrategies/PlayerStrategy.cpp
+    PlayerStrategies/ConcreteStrategies/HumanPlayerStrategy.cpp
+    Controller/GameController/TicTacToeGame.cpp
+    Controller/BoardGames.cpp
+    GameStateHandler/GameState.cpp
+    GameStateHandler/Context/GameContext.cpp
+    GameStateHandler/ConcreteStates/XWonState.cpp
+    GameStateHandler/ConcreteStates/OWonState.cpp
+    GameStateHandler/ConcreteStates/DrawState.cpp
+    GameStateHandler/ConcreteStates/InProgressState.cpp
+) 
